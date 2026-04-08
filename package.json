@@ -1,0 +1,13 @@
+{
+  "name": "nexvill-pricing-monitor",
+  "version": "4.0.0",
+  "description": "Monitors OpenAI and Anthropic pricing for changes and alerts via Gmail.",
+  "type": "module",
+  "scripts": {
+    "start": "node monitor.js",
+    "check": "node monitor.js"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.0"
+  }
+}
