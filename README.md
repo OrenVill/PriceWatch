@@ -1,168 +1,116 @@
-# PriceWatch — AI Pricing Monitor
+# PriceWatch — AI Pricing Microservice
 
-Automatically monitors OpenAI and Anthropic model pricing, detects changes, and sends you a beautiful email alert the moment anything shifts.
-
----
-
-## How it works
-
-1. Fetches live pricing from the [LiteLLM community JSON](https://github.com/BerriAI/litellm) (updated by the community on every price change)
-2. Compares against your stored `pricing-baseline.json`
-3. If anything changed → sends you a styled HTML email with a full breakdown
-4. Updates the baseline so you only get alerted once per change
+A lightweight REST API that serves cached OpenAI and Anthropic model pricing to any app. Refreshes from LiteLLM every hour and emails you when prices change.
 
 ---
 
 ## Setup
 
-### 1. Install dependencies
-
 ```bash
 npm install
+cp .env.example .env
+# fill in your .env values
+node server.js
 ```
 
 ---
 
-### 2. Create your `.env` file
+## API Endpoints
 
-Create a file called `.env` in the project root (same folder as `monitor.js`):
 
-```env
-# Your app name — shown in the email sender name
-APP_NAME=PriceWatch
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/health` | Service status + cache info (no auth) |
+| GET | `/prices` | All models (OpenAI + Anthropic) |
+| GET | `/prices/openai` | OpenAI models only |
+| GET | `/prices/anthropic` | Anthropic models only |
+| GET | `/prices/model/:model` | Single model lookup |
 
-# The Gmail address that sends the alert
-EMAIL_FROM_ADDRESS=you@gmail.com
+### Example requests
 
-# Where the alert gets delivered (can be the same as above)
-EMAIL_TO=you@gmail.com
+```bash
+# Health check
+curl http://localhost:3001/health
 
-# Your Gmail address (used for SMTP login)
-EMAIL_USER=you@gmail.com
+# All prices
+curl http://localhost:3001/prices
 
-# Your Gmail App Password (16 characters, no spaces)
-EMAIL_PASSWORD=abcdefghijklmnop
+# Single model
+curl http://localhost:3001/prices/model/gpt-4o
 ```
 
-> ⚠️ Never commit your `.env` file. Add it to `.gitignore`.
+### Example response — single model
+
+```json
+{
+  "model": "gpt-4o",
+  "provider": "openai",
+  "input": 2.5,
+  "output": 10,
+  "lastUpdated": "2026-04-08T09:00:00.000Z"
+}
+```
 
 ---
 
-### 3. Get a Gmail App Password
+## Calling PriceWatch from your app
 
-Regular Gmail passwords won't work — you need an **App Password**.
+```js
+const PRICEWATCH_URL = "http://localhost:3001";
 
-**Requirements:** Your Google account must have 2-Step Verification enabled.
+// Get price for a single model
+async function getModelPrice(model) {
+  const res = await fetch(`${PRICEWATCH_URL}/prices/model/${model}`, {
+  });
+  if (!res.ok) throw new Error(`PriceWatch error: ${res.status}`);
+  return res.json(); // { model, provider, input, output, lastUpdated }
+}
 
-**Steps:**
+// Get all prices
+async function getAllPrices() {
+  const res = await fetch(`${PRICEWATCH_URL}/prices`, {
+  });
+  if (!res.ok) throw new Error(`PriceWatch error: ${res.status}`);
+  return res.json(); // { openai: {...}, anthropic: {...}, lastUpdated }
+}
 
-1. Enable 2-Step Verification (if not already on):
+// Calculate cost for a request
+const price = await getModelPrice("gpt-4o");
+const cost = (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
+```
+
+---
+
+## Environment variables
+
+| Variable | Description |
+|---|---|
+| `APP_NAME` | Display name in email alerts (e.g. `PriceWatch`) |
+| `EMAIL_FROM_ADDRESS` | Gmail address to send alerts from |
+| `EMAIL_TO` | Where alerts get delivered |
+| `EMAIL_USER` | Gmail SMTP login (same as FROM) |
+| `EMAIL_PASSWORD` | Gmail App Password — see below |
+| `PORT` | Port to run on (default: `3001`) |
+
+### Getting a Gmail App Password
+
+1. Enable 2-Step Verification:
    👉 https://myaccount.google.com/signinoptions/two-step-verification
 
-2. Go to App Passwords:
+2. Generate an App Password:
    👉 https://myaccount.google.com/apppasswords
 
-3. In the text field, type a name like `PriceWatch` and click **Create**
+3. Type any name (e.g. `PriceWatch`) and click **Create**
 
-4. Google shows you a **16-character password** in a yellow box — copy it immediately (it won't show again)
-
-5. Paste it into your `.env` as `EMAIL_PASSWORD` with **no spaces**:
-   ```
-   EMAIL_PASSWORD=abcdefghijklmnop
-   ```
+4. Copy the 16-character password and paste it into `.env` as `EMAIL_PASSWORD` with no spaces
 
 ---
 
-### 4. Run manually
 
-```bash
-node monitor.js
-```
 
-Expected output on first run:
-```
-🔍 PriceWatch starting...
+## How it works
 
-Fetching OpenAI pricing...
-  ✅ Found 112 OpenAI model(s) via LiteLLM community JSON.
-Fetching Anthropic pricing...
-  ✅ Found 19 Anthropic model(s) via LiteLLM community JSON.
-
-✅ No pricing changes detected.
-✅ Baseline updated.
-
-Done.
-```
-
----
-
-### 5. Schedule automatic daily checks
-
-**Mac / Linux — cron job:**
-
-Open your crontab:
-```bash
-crontab -e
-```
-
-Add this line to run every day at 9am:
-```
-0 9 * * * cd /full/path/to/pricewatch && node monitor.js >> /var/log/pricewatch.log 2>&1
-```
-
-Replace `/full/path/to/pricewatch` with your actual folder path. To find it, run `pwd` inside the project folder.
-
-**Windows — Task Scheduler:**
-- Open Task Scheduler → Create Basic Task
-- Trigger: Daily at 9:00 AM
-- Action: Start a program
-- Program: `node`
-- Arguments: `C:\path\to\pricewatch\monitor.js`
-
----
-
-## Project structure
-
-```
-pricewatch/
-├── monitor.js              # Main script — fetches, diffs, alerts
-├── config.js               # Email configuration (reads from .env)
-├── pricing-baseline.json   # Stored pricing snapshot (auto-updated)
-├── package.json            # Dependencies
-├── .env                    # Your secrets — never commit this!
-└── README.md               # This file
-```
-
----
-
-## Email alert
-
-When a price change is detected you'll receive a styled HTML email that includes:
-
-- **Summary badges** — counts of price changes, new models, and removals
-- **Color-coded cards** — green for new models, red for removed, yellow for price changes
-- **Price diff pills** — shows the exact delta (▲/▼) for each changed model
-- **Dark mode support** — automatically adapts to your email client's theme
-
----
-
-## Troubleshooting
-
-| Error | Fix |
-|---|---|
-| `Missing credentials for "PLAIN"` | Your `.env` is missing or variables are not loading. Run `node -e "import('dotenv/config').then(() => console.log(process.env.EMAIL_USER))"` to check. |
-| `Username and Password not accepted` | You used your regular Gmail password. You need an App Password — see Step 3 above. |
-| `0 models found` | The LiteLLM JSON fetch failed. Check your internet connection and try again. |
-| Emails going to spam | This is normal for first-time sends. Mark as "Not spam" once and it won't happen again. |
-| App Passwords page not found | 2-Step Verification is not enabled on your Google account. Enable it first at https://myaccount.google.com/signinoptions/two-step-verification |
-
----
-
-## Dependencies
-
-| Package | Purpose |
-|---|---|
-| `nodemailer` | Sends email via Gmail SMTP |
-| `dotenv` | Loads `.env` variables |
-
-Pricing data is fetched via plain `fetch()` — no extra HTTP library needed.
+1. On boot, fetches all OpenAI + Anthropic model prices from [LiteLLM community JSON](https://github.com/BerriAI/litellm)
+2. Serves prices instantly from memory — no database needed
+3. Refreshes the cache every hour in the background
+4. If any price changes — sends you a styled HTML email alert automatically

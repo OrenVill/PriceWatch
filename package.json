@@ -1,14 +1,16 @@
 {
-  "name": "PriceWatch",
-  "version": "4.0.0",
-  "description": "Monitors OpenAI and Anthropic pricing for changes and alerts via Gmail.",
+  "name": "pricewatch-service",
+  "version": "1.0.0",
+  "description": "AI pricing microservice for Nexvill — serves cached OpenAI + Anthropic pricing via REST API.",
   "type": "module",
+  "main": "server.js",
   "scripts": {
-    "start": "node monitor.js",
-    "check": "node monitor.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
   "dependencies": {
-    "dotenv": "^17.4.1",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.0",
     "nodemailer": "^6.9.0"
   }
 }
