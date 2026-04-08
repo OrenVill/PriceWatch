@@ -1,3 +1,4 @@
+import "dotenv/config";
 /**
  * Nexvill Pricing Monitor — Configuration
  */
@@ -6,7 +7,7 @@ export const config = {
   email: {
     enabled: true,
 
-    from: `${process.env.APP_NAME} Pricing Monitor <${process.env.EMAIL_FROM}>`,
+    from: `${process.env.APP_NAME} Pricing Monitor <${process.env.EMAIL_FROM_ADDRESS}>`,
     to: process.env.EMAIL_TO,
 
     smtp: {
