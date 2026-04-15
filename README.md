@@ -1,116 +1,173 @@
-# PriceWatch — AI Pricing Microservice
+# PriceWatch
 
-A lightweight REST API that serves cached OpenAI and Anthropic model pricing to any app. Refreshes from LiteLLM every hour and emails you when prices change.
+PriceWatch tracks OpenAI and Anthropic model pricing from the
+[LiteLLM community JSON](https://github.com/BerriAI/litellm) and pushes
+signed webhook notifications to registered subscribers whenever prices change.
 
----
+## Architecture
 
-## Setup
+PriceWatch is split into two independent pieces that share state through an
+AWS S3 bucket (`subscribers.json` and `prices.json`).
 
-```bash
-npm install
-cp .env.example .env
-# fill in your .env values
-node server.js
-```
+### 1. Registration service (`registration-service/`)
 
----
+A small always-on Express server. Its only job is to maintain the subscriber
+list. It does not fetch prices and does not run on a timer.
 
-## API Endpoints
+### 2. PriceWatch cronjob (`cronjob/`)
 
+A short-lived Node script that runs every 6 hours (via Kubernetes `CronJob`).
+It fetches the latest pricing, diffs against the previous snapshot in S3,
+pushes signed webhooks to all subscribers, retries failures with exponential
+backoff, and exits.
 
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/health` | Service status + cache info (no auth) |
-| GET | `/prices` | All models (OpenAI + Anthropic) |
-| GET | `/prices/openai` | OpenAI models only |
-| GET | `/prices/anthropic` | Anthropic models only |
-| GET | `/prices/model/:model` | Single model lookup |
+### Shared storage
 
-### Example requests
+Both pieces read and write the same two files in S3:
 
-```bash
-# Health check
-curl http://localhost:3001/health
+- `subscribers.json` — array of registered subscribers
+- `prices.json` — last known pricing snapshot
 
-# All prices
-curl http://localhost:3001/prices
+Shared helpers live in [lib/s3.js](lib/s3.js).
 
-# Single model
-curl http://localhost:3001/prices/model/gpt-4o
-```
+## Endpoints (registration service)
 
-### Example response — single model
+All write endpoints require the `X-Api-Key` header.
+
+### `POST /subscribe`
 
 ```json
 {
-  "model": "gpt-4o",
-  "provider": "openai",
-  "input": 2.5,
-  "output": 10,
-  "lastUpdated": "2026-04-08T09:00:00.000Z"
+  "appName": "My App",
+  "webhookUrl": "https://myapp.example.com/webhooks/pricewatch",
+  "webhookSecret": "long-random-string",
+  "contactEmail": "ops@myapp.example.com"
 }
 ```
 
----
+Responses:
+- `201` — registered
+- `400` — missing fields
+- `401` — bad API key
+- `409` — `webhookUrl` already registered
 
-## Calling PriceWatch from your app
+### `DELETE /unsubscribe`
+
+```json
+{ "webhookUrl": "https://myapp.example.com/webhooks/pricewatch" }
+```
+
+### `GET /health`
+
+Public. Returns `{ status, registeredSubscribers, timestamp }`.
+
+## Webhook payload
+
+The cronjob POSTs the following JSON to each subscriber's `webhookUrl`:
+
+```json
+{
+  "event": "price.update",
+  "timestamp": "2026-04-15T12:00:00.000Z",
+  "changes": [
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "type": "PRICE_CHANGE",
+      "prev": { "input": 2.5, "output": 10.0 },
+      "now":  { "input": 2.0, "output": 8.0 }
+    }
+  ],
+  "prices": {
+    "openai":    { "gpt-4o": { "input": 2.0, "output": 8.0 } },
+    "anthropic": { "claude-3-5-sonnet-20241022": { "input": 3.0, "output": 15.0 } }
+  }
+}
+```
+
+Change `type` is one of `NEW_MODEL`, `REMOVED_MODEL`, or `PRICE_CHANGE`.
+Price changes smaller than 1% are filtered out as rounding noise.
+
+### Signature verification
+
+Each request carries an `X-PriceWatch-Signature` header — an HMAC-SHA256 hex
+digest of the raw request body using the `webhookSecret` you registered with.
 
 ```js
-const PRICEWATCH_URL = "http://localhost:3001";
+import crypto from "crypto";
 
-// Get price for a single model
-async function getModelPrice(model) {
-  const res = await fetch(`${PRICEWATCH_URL}/prices/model/${model}`, {
-  });
-  if (!res.ok) throw new Error(`PriceWatch error: ${res.status}`);
-  return res.json(); // { model, provider, input, output, lastUpdated }
+function verify(req, secret) {
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(req.rawBody)          // raw body string, not JSON.parse'd
+    .digest("hex");
+  const got = req.header("X-PriceWatch-Signature") || "";
+  return expected.length === got.length &&
+    crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(got));
 }
-
-// Get all prices
-async function getAllPrices() {
-  const res = await fetch(`${PRICEWATCH_URL}/prices`, {
-  });
-  if (!res.ok) throw new Error(`PriceWatch error: ${res.status}`);
-  return res.json(); // { openai: {...}, anthropic: {...}, lastUpdated }
-}
-
-// Calculate cost for a request
-const price = await getModelPrice("gpt-4o");
-const cost = (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 ```
 
----
+### Retry & removal policy
+
+- Each push has a 10-second timeout.
+- Failed pushes retry 3 times with exponential backoff: 1 min, 5 min, 15 min.
+- After 3 consecutive failures, the subscriber is removed and an email is
+  sent to `contactEmail`.
 
 ## Environment variables
 
-| Variable | Description |
-|---|---|
-| `APP_NAME` | Display name in email alerts (e.g. `PriceWatch`) |
-| `EMAIL_FROM_ADDRESS` | Gmail address to send alerts from |
-| `EMAIL_TO` | Where alerts get delivered |
-| `EMAIL_USER` | Gmail SMTP login (same as FROM) |
-| `EMAIL_PASSWORD` | Gmail App Password — see below |
-| `PORT` | Port to run on (default: `3001`) |
+| Variable | Used by | Description |
+| --- | --- | --- |
+| `PRICEWATCH_API_KEY` | registration, cronjob | Shared API key for `/subscribe` and `/unsubscribe` |
+| `AWS_ACCESS_KEY_ID` | both | AWS credentials |
+| `AWS_SECRET_ACCESS_KEY` | both | AWS credentials |
+| `AWS_REGION` | both | AWS region of the S3 bucket |
+| `S3_BUCKET_NAME` | both | Bucket holding `subscribers.json` and `prices.json` |
+| `PORT` | registration | HTTP port (default `3001`) |
+| `APP_NAME` | cronjob | Display name used in email `From` |
+| `EMAIL_FROM_ADDRESS` | cronjob | `From` address for outgoing email |
+| `EMAIL_TO` | cronjob | Owner alert recipient |
+| `EMAIL_USER` | cronjob | SMTP username (Gmail) |
+| `EMAIL_PASSWORD` | cronjob | SMTP app password |
 
-### Getting a Gmail App Password
+See [.env.example](.env.example).
 
-1. Enable 2-Step Verification:
-   👉 https://myaccount.google.com/signinoptions/two-step-verification
+## Local development
 
-2. Generate an App Password:
-   👉 https://myaccount.google.com/apppasswords
+```bash
+# Registration service
+cd registration-service && npm install && npm start
 
-3. Type any name (e.g. `PriceWatch`) and click **Create**
+# Cronjob (one-off run)
+cd cronjob && npm install && npm start
+```
 
-4. Copy the 16-character password and paste it into `.env` as `EMAIL_PASSWORD` with no spaces
+## Deployment
 
----
+Both pieces ship as separate images to GitHub Container Registry:
 
+- `ghcr.io/orenvill/pricewatch-registration:latest`
+- `ghcr.io/orenvill/pricewatch-cronjob:latest`
 
+Images are built and pushed by
+[.github/workflows/docker.yml](.github/workflows/docker.yml) on every push to
+`master`.
 
-## How it works
+### Kubernetes
 
-1. On boot, fetches all OpenAI + Anthropic model prices from [LiteLLM community JSON](https://github.com/BerriAI/litellm)
-2. Serves prices instantly from memory — no database needed
-3. Refreshes the cache every hour in the background
-4. If any price changes — sends you a styled HTML email alert automatically
+Create the shared secret:
+
+```bash
+kubectl create secret generic pricewatch-secrets --from-env-file=.env
+```
+
+Apply manifests:
+
+```bash
+kubectl apply -f k8s/deployment.yaml \
+              -f k8s/service.yaml \
+              -f k8s/ingress.yaml \
+              -f k8s/cronjob.yaml
+```
+
+The cronjob runs on the schedule `0 */6 * * *` (every 6 hours).

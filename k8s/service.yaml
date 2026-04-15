@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pricewatch-registration
+spec:
+  type: ClusterIP
+  selector:
+    app: pricewatch-registration
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3001
