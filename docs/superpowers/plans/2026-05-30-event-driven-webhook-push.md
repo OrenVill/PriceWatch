@@ -499,7 +499,7 @@ export function sign(rawBody, secret) {
  */
 export function nextRetry(item, { maxRetries, retryDelayMs, now }) {
   const attempts = item.attempts + 1;
-  if (attempts > maxRetries + 1) return { drop: true };
+  if (attempts > maxRetries) return { drop: true };
   return {
     drop: false,
     attempts,
