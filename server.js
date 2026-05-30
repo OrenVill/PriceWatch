@@ -6,18 +6,29 @@
  * Run: node server.js
  */
 
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import express from "express";
 import nodemailer from "nodemailer";
 import { config } from "./config.js";
+
+const BASELINE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "pricing-baseline.json");
 
 const app = express();
 
 // ─── In-memory cache ──────────────────────────────────────────────────────────
 
+function loadBaseline() {
+  if (!fs.existsSync(BASELINE_FILE)) return { openai: {}, anthropic: {} };
+  return JSON.parse(fs.readFileSync(BASELINE_FILE, "utf8"));
+}
+
+const saved = loadBaseline();
 let cache = {
-  openai: {},
-  anthropic: {},
-  lastUpdated: null,
+  openai: saved.openai,
+  anthropic: saved.anthropic,
+  lastUpdated: saved.lastUpdated ?? null,
   nextUpdate: null,
 };
 
@@ -228,6 +239,7 @@ async function refreshCache() {
       lastUpdated: new Date().toISOString(),
       nextUpdate:  new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     };
+    fs.writeFileSync(BASELINE_FILE, JSON.stringify({ openai, anthropic, lastUpdated: cache.lastUpdated }, null, 2));
   } catch (err) {
     console.error("  ❌ Cache refresh failed:", err.message);
   }
