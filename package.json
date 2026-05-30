@@ -1,16 +1,16 @@
 {
   "name": "pricewatch-service",
-  "version": "1.0.0",
-  "description": "AI pricing microservice for Nexvill — serves cached OpenAI + Anthropic pricing via REST API.",
+  "version": "2.0.0",
+  "description": "Event-driven AI pricing service — clients register a webhook and receive signed pricing-change pushes.",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.0.0",
-    "express": "^4.18.0",
-    "nodemailer": "^6.9.0"
+    "express": "^4.18.0"
   }
 }

@@ -1,5 +1,6 @@
 node_modules/
 .env
 pricing-baseline.json
-package-lock.json
-pricing-baseline.json
+subscribers.json
+retry-queue.json
+*.tmp
