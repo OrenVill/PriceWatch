@@ -27,10 +27,10 @@ export function nextRetry(item, { maxRetries, retryDelayMs, now }) {
  * POST a signed event. Returns { ok, status, error }. Never throws.
  */
 export async function postEvent({ url, event, payload, secret, timeoutMs }) {
-  const rawBody = JSON.stringify(payload);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const rawBody = JSON.stringify(payload);
     const res = await fetch(url, {
       method: "POST",
       signal: controller.signal,

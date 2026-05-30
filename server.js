@@ -51,23 +51,29 @@ async function detectAndPush() {
     for (const sub of subs) {
       const relevant = changes.filter((c) => sub.providers.includes(c.provider));
       if (relevant.length === 0) continue;
-      const payload = {
-        type: "change",
-        deliveryId: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-        changes: relevant,
-      };
-      const res = await postEvent({
-        url: sub.url, event: "change", payload, secret: sub.secret,
-        timeoutMs: config.deliveryTimeoutMs,
-      });
-      if (!res.ok) {
-        await store.enqueueRetry({
-          subscriberId: sub.id, url: sub.url, payload,
-          attempts: 1, lastError: res.error || `HTTP ${res.status}`,
-          nextAttempt: new Date(Date.now() + config.retryDelayMs).toISOString(),
+      // Isolate each subscriber: a delivery or enqueue error must not abort the
+      // rest of the fan-out or skip the baseline write below.
+      try {
+        const payload = {
+          type: "change",
+          deliveryId: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          changes: relevant,
+        };
+        const res = await postEvent({
+          url: sub.url, event: "change", payload, secret: sub.secret,
+          timeoutMs: config.deliveryTimeoutMs,
         });
-        console.warn(`[detect] delivery to ${sub.id} failed, queued for retry.`);
+        if (!res.ok) {
+          await store.enqueueRetry({
+            subscriberId: sub.id, url: sub.url, payload,
+            attempts: 1, lastError: res.error || `HTTP ${res.status}`,
+            nextAttempt: new Date(Date.now() + config.retryDelayMs).toISOString(),
+          });
+          console.warn(`[detect] delivery to ${sub.id} failed, queued for retry.`);
+        }
+      } catch (err) {
+        console.error(`[detect] error handling subscriber ${sub.id}: ${err.message}`);
       }
     }
     console.log(`[detect] ${changes.length} change(s) fanned out to ${subs.length} subscriber(s).`);
