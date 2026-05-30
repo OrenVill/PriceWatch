@@ -22,9 +22,17 @@ export function isAllowedUrl(raw, allowPrivate) {
     if (ip6.startsWith("fe8") || ip6.startsWith("fe9") ||
         ip6.startsWith("fea") || ip6.startsWith("feb")) return false; // fe80::/10 link-local
     if (ip6.startsWith("fc") || ip6.startsWith("fd")) return false;   // fc00::/7 unique-local
-    // IPv4-mapped (::ffff:a.b.c.d) — fall through to the IPv4 check on the embedded address.
-    const mapped = ip6.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
-    if (mapped) return isPrivateIPv4(mapped[1]) ? false : true;
+    // IPv4-mapped (::ffff:a.b.c.d). URL() normalizes the trailing 32 bits to
+    // hex (e.g. ::ffff:127.0.0.1 → ::ffff:7f00:1), so decode that to dotted-quad.
+    const mappedHex = ip6.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+    if (mappedHex) {
+      const hi = parseInt(mappedHex[1], 16);
+      const lo = parseInt(mappedHex[2], 16);
+      const dotted = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+      return isPrivateIPv4(dotted) ? false : true;
+    }
+    const mappedDotted = ip6.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
+    if (mappedDotted) return isPrivateIPv4(mappedDotted[1]) ? false : true;
     return true;
   }
 
