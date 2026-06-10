@@ -1,116 +1,121 @@
-# PriceWatch — AI Pricing Microservice
+# PriceWatch
 
-A lightweight REST API that serves cached OpenAI and Anthropic model pricing to any app. Refreshes from LiteLLM every hour and emails you when prices change.
+Event-driven AI pricing service — clients register a webhook and receive signed pricing-change pushes.
 
 ---
 
-## Setup
+## Run
 
 ```bash
 npm install
 cp .env.example .env
-# fill in your .env values
 node server.js
 ```
 
----
-
-## API Endpoints
-
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/health` | Service status + cache info (no auth) |
-| GET | `/prices` | All models (OpenAI + Anthropic) |
-| GET | `/prices/openai` | OpenAI models only |
-| GET | `/prices/anthropic` | Anthropic models only |
-| GET | `/prices/model/:model` | Single model lookup |
-
-### Example requests
+Development (auto-restart on save):
 
 ```bash
-# Health check
-curl http://localhost:3001/health
-
-# All prices
-curl http://localhost:3001/prices
-
-# Single model
-curl http://localhost:3001/prices/model/gpt-4o
+node --watch server.js
 ```
 
-### Example response — single model
+Test suite:
+
+```bash
+npm test
+```
+
+---
+
+## Register a webhook
+
+Send a `POST /subscribe` with the URL you want to receive events and an optional list of providers to filter on:
+
+```bash
+curl -X POST http://localhost:3001/subscribe \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://your-app.example.com/pricewatch", "providers": ["openai", "anthropic"]}'
+```
+
+The response is `201 Created` and includes the subscriber `id`:
 
 ```json
 {
-  "model": "gpt-4o",
-  "provider": "openai",
-  "input": 2.5,
-  "output": 10,
-  "lastUpdated": "2026-04-08T09:00:00.000Z"
+  "id": "sub_abc123",
+  "status": "pending"
 }
 ```
 
 ---
 
-## Calling PriceWatch from your app
+## Verification ping
+
+Before the subscription becomes active, PriceWatch sends a `POST` to your URL with a body like:
+
+```json
+{
+  "type": "verification",
+  "challenge": "rand-hex-value",
+  "secret": "your-signing-secret"
+}
+```
+
+Your receiver **must** respond with `2xx` and echo the challenge:
+
+```json
+{ "challenge": "rand-hex-value" }
+```
+
+The `secret` in the ping body is your signing key — store it securely. Once the ping succeeds, the subscription becomes active and price-change events will be delivered.
+
+---
+
+## Verify a delivery
+
+Every event POST includes an `X-PriceWatch-Signature` header:
+
+```
+X-PriceWatch-Signature: sha256=<hmac>
+```
+
+The HMAC is computed as HMAC-SHA256 over the **raw request body**, keyed by your `secret`. Verify it in your receiver before trusting the payload:
 
 ```js
-const PRICEWATCH_URL = "http://localhost:3001";
+import crypto from "crypto";
 
-// Get price for a single model
-async function getModelPrice(model) {
-  const res = await fetch(`${PRICEWATCH_URL}/prices/model/${model}`, {
-  });
-  if (!res.ok) throw new Error(`PriceWatch error: ${res.status}`);
-  return res.json(); // { model, provider, input, output, lastUpdated }
+function verifySignature(rawBody, secret, signatureHeader) {
+  const expected = "sha256=" + crypto
+    .createHmac("sha256", secret)
+    .update(rawBody)
+    .digest("hex");
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signatureHeader));
 }
-
-// Get all prices
-async function getAllPrices() {
-  const res = await fetch(`${PRICEWATCH_URL}/prices`, {
-  });
-  if (!res.ok) throw new Error(`PriceWatch error: ${res.status}`);
-  return res.json(); // { openai: {...}, anthropic: {...}, lastUpdated }
-}
-
-// Calculate cost for a request
-const price = await getModelPrice("gpt-4o");
-const cost = (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 ```
+
+---
+
+## Unsubscribe
+
+```bash
+curl -X DELETE http://localhost:3001/subscribe/<id> \
+  -H "Authorization: Bearer <secret>"
+```
+
+---
+
+## Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/subscribe` | none | Register a webhook URL |
+| `DELETE` | `/subscribe/:id` | `Bearer <secret>` | Remove a subscription |
+| `GET` | `/health` | none | Service status |
 
 ---
 
 ## Environment variables
 
-| Variable | Description |
-|---|---|
-| `APP_NAME` | Display name in email alerts (e.g. `PriceWatch`) |
-| `EMAIL_FROM_ADDRESS` | Gmail address to send alerts from |
-| `EMAIL_TO` | Where alerts get delivered |
-| `EMAIL_USER` | Gmail SMTP login (same as FROM) |
-| `EMAIL_PASSWORD` | Gmail App Password — see below |
-| `PORT` | Port to run on (default: `3001`) |
-
-### Getting a Gmail App Password
-
-1. Enable 2-Step Verification:
-   👉 https://myaccount.google.com/signinoptions/two-step-verification
-
-2. Generate an App Password:
-   👉 https://myaccount.google.com/apppasswords
-
-3. Type any name (e.g. `PriceWatch`) and click **Create**
-
-4. Copy the 16-character password and paste it into `.env` as `EMAIL_PASSWORD` with no spaces
-
----
-
-
-
-## How it works
-
-1. On boot, fetches all OpenAI + Anthropic model prices from [LiteLLM community JSON](https://github.com/BerriAI/litellm)
-2. Serves prices instantly from memory — no database needed
-3. Refreshes the cache every hour in the background
-4. If any price changes — sends you a styled HTML email alert automatically
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3001` | Port the service listens on |
+| `DATA_DIR` | `.` | Directory for JSON state files (`subscribers.json`, `retry-queue.json`, `pricing-baseline.json`) |
+| `ALLOW_PRIVATE_URLS` | `false` | Set to `true` to allow `localhost`/private-IP webhook targets (local testing only) |
