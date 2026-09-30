@@ -2,6 +2,8 @@
 
 Event-driven AI pricing service — clients register a webhook and receive signed pricing-change pushes.
 
+**Catalog mode** is a minimal deployment that only serves OpenAI and Anthropic model pricing over HTTP (no subscriptions or outbound webhooks). See [Catalog mode](#catalog-mode) below.
+
 ---
 
 ## Run
@@ -116,6 +118,74 @@ curl -X DELETE http://localhost:3001/subscribe/<id> \
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3001` | Port the service listens on |
+| `PRICEWATCH_MODE` | `full` | `full` — webhook push service; `catalog` — read-only price API |
+| `PORT` | `3001` (`7000` in catalog) | Port the service listens on |
 | `DATA_DIR` | `.` | Directory for JSON state files (`subscribers.json`, `retry-queue.json`, `pricing-baseline.json`) |
 | `ALLOW_PRIVATE_URLS` | `false` | Set to `true` to allow `localhost`/private-IP webhook targets (local testing only) |
+
+---
+
+## Catalog mode
+
+Run a stateless in-cluster price catalog (LiteLLM source, OpenAI + Anthropic only). Prefer **`catalog-server.js`** — it does not load Express, subscribers, or webhook code:
+
+```bash
+node catalog-server.js
+# or
+npm run start:catalog
+# or
+node cli.js serve --mode=catalog
+```
+
+`PRICEWATCH_MODE=catalog node server.js` also works but loads the full app module graph; use `catalog-server.js` in production sidecars.
+
+### Resource profile
+
+Designed for **very low** cluster cost:
+
+- **No npm dependencies** in the catalog Docker image (`node:http` only).
+- **Pre-serialized** `/prices` JSON (no `JSON.stringify` per request).
+- **Hourly** LiteLLM refresh by default (set `REFRESH_INTERVAL_SEC=0` for startup-only fetch).
+- Suggested Kubernetes requests: **50m CPU / 64Mi** memory (see `deploy/kubernetes/pricewatch-catalog.yaml`).
+- Container sets `NODE_OPTIONS=--max-old-space-size=64` to cap V8 heap.
+
+### Endpoints (catalog)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/prices` | OpenAI and Anthropic models ($/1M tokens) plus `lastUpdated` |
+| `GET` | `/healthz` | Liveness/readiness (`{ "ok": true, "mode": "catalog" }`) |
+
+`POST /subscribe` and `DELETE /subscribe/:id` return **404**.
+
+### Catalog environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PRICEWATCH_MODE` | `catalog` when using catalog image | Must be `catalog` |
+| `PORT` | `7000` | HTTP port |
+| `REFRESH_INTERVAL_SEC` | `3600` | Periodic LiteLLM refresh; `0` = refresh on startup only |
+| `HTTP_TIMEOUT_MS` | `30000` | Upstream fetch timeout |
+| `USER_AGENT` | `PriceWatch-Catalog/1.0` | User-Agent for LiteLLM fetch |
+
+On refresh failure, the last successful catalog is kept; `/healthz` stays `200` even if data is stale.
+
+### Example
+
+```bash
+curl -sS http://localhost:7000/prices | jq '.openai | keys | length, .anthropic | keys | length'
+curl -sS http://localhost:7000/healthz
+```
+
+### Container image
+
+Build the catalog-only image:
+
+```bash
+docker build -f Dockerfile.catalog -t pricewatch-catalog:local .
+docker run --rm -p 7000:7000 -e REFRESH_INTERVAL_SEC=3600 pricewatch-catalog:local
+```
+
+The catalog image is **Alpine + four JS files** (no `npm install`, no Express).
+
+CI publishes `ghcr.io/<owner>/<repo>-catalog` on pushes to `master` and version tags (see `.github/workflows/catalog-image.yml`).

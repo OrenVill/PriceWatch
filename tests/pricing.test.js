@@ -29,6 +29,18 @@ test("parsePricing splits providers and converts to $/1M", () => {
   assert.deepEqual(anthropic, { "claude-3-5-sonnet": { input: 3, output: 15 } });
 });
 
+test("parsePricing includes cachedInput when LiteLLM provides cache read cost", () => {
+  const raw = {
+    "claude-x": {
+      input_cost_per_token: 0.000003,
+      output_cost_per_token: 0.000015,
+      cache_read_input_token_cost: 3e-7,
+    },
+  };
+  const { anthropic } = parsePricing(raw);
+  assert.deepEqual(anthropic["claude-x"], { input: 3, output: 15, cachedInput: 0.3 });
+});
+
 test("diffPricing detects new, removed, and changed models", () => {
   const prev = { "gpt-4o": { input: 2.5, output: 10 }, "gpt-old": { input: 1, output: 2 } };
   const now = { "gpt-4o": { input: 2, output: 10 }, "gpt-new": { input: 5, output: 6 } };

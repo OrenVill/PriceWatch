@@ -7,6 +7,7 @@
  */
 import express from "express";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { fetchPricing, diffPricing } from "./pricing.js";
 import { createStore } from "./store.js";
@@ -21,10 +22,15 @@ let lastUpdated = null;
 let nextUpdate = null;
 
 // ── Detection + fan-out ────────────────────────────────────────────────────
+const fetchOptions = {
+  timeoutMs: config.httpTimeoutMs,
+  userAgent: config.userAgent,
+};
+
 async function detectAndPush() {
   let current;
   try {
-    current = await fetchPricing();
+    current = await fetchPricing(fetchOptions);
   } catch (err) {
     console.error(`[detect] fetch failed: ${err.message}`);
     return;
@@ -177,8 +183,12 @@ app.get("/health", async (req, res) => {
 // ── Boot ───────────────────────────────────────────────────────────────────
 export { app, detectAndPush, processRetries, store };
 
-const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
-if (isMain) {
+export async function start() {
+  if (config.isCatalog) {
+    const { startCatalogServer } = await import("./catalog.js");
+    await startCatalogServer(config);
+    return;
+  }
   await detectAndPush();
   setInterval(detectAndPush, config.refreshIntervalMs);
   setInterval(processRetries, config.retryTickMs);
@@ -188,4 +198,12 @@ if (isMain) {
     console.log(`   DELETE /subscribe/:id   (Authorization: Bearer <secret>)`);
     console.log(`   GET    /health\n`);
   });
+}
+
+const isMain =
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === fileURLToPath(process.argv[1]);
+
+if (isMain) {
+  await start();
 }

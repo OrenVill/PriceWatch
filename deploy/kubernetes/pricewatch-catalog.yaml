@@ -1,0 +1,60 @@
+# Reference deployment — tuned for very low CPU/memory (stateless catalog poller).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pricewatch-catalog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pricewatch-catalog
+  template:
+    metadata:
+      labels:
+        app: pricewatch-catalog
+    spec:
+      containers:
+        - name: pricewatch
+          image: ghcr.io/OWNER/REPO-catalog:latest
+          env:
+            - name: PRICEWATCH_MODE
+              value: catalog
+            - name: PORT
+              value: "7000"
+            - name: REFRESH_INTERVAL_SEC
+              value: "3600"
+            - name: NODE_OPTIONS
+              value: --max-old-space-size=64
+          ports:
+            - containerPort: 7000
+              name: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pricewatch
+spec:
+  selector:
+    app: pricewatch-catalog
+  ports:
+    - port: 7000
+      targetPort: http

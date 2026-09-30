@@ -4,8 +4,12 @@
   "description": "Event-driven AI pricing service — clients register a webhook and receive signed pricing-change pushes.",
   "type": "module",
   "main": "server.js",
+  "bin": {
+    "pricewatch": "./cli.js"
+  },
   "scripts": {
     "start": "node server.js",
+    "start:catalog": "node catalog-server.js",
     "dev": "node --watch server.js",
     "test": "node --test"
   },
