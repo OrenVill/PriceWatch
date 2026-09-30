@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm install          # install dependencies
-node server.js       # start the service (production)
+node server.js       # start the service (production, full mode)
+node catalog-server.js  # catalog-only read API (port 7000, minimal memory)
+node cli.js serve --mode=catalog
 node --watch server.js  # start with auto-restart on file changes (dev)
 npm test             # run the unit test suite (node --test)
 ```
@@ -35,7 +37,8 @@ Prices are stored as $/1M tokens (raw cost × 1_000_000), rounded to 4 decimals.
 - No database — state is JSON files in `DATA_DIR`. They survive restarts; absolute
   `nextAttempt` timestamps mean queued retries resume after a restart.
 - No email. Delivery is webhooks only.
-- Endpoints: `POST /subscribe`, `DELETE /subscribe/:id` (Bearer secret), `GET /health`.
+- Endpoints (full): `POST /subscribe`, `DELETE /subscribe/:id` (Bearer secret), `GET /health`.
   `/health` is unauthenticated.
+- **Catalog mode** (`PRICEWATCH_MODE=catalog`): `GET /prices`, `GET /healthz` only; no webhooks or background delivery.
 - Subscribers verify URL ownership via a confirmation ping (2xx + challenge echo) before activation.
 - Webhook POSTs are signed: `X-PriceWatch-Signature: sha256=<hmac>` over the raw body.

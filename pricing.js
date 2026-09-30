@@ -35,14 +35,37 @@ export function parsePricing(data) {
       input: round(info.input_cost_per_token * 1_000_000),
       output: round(info.output_cost_per_token * 1_000_000),
     };
+    if (info.cache_read_input_token_cost) {
+      entry.cachedInput = round(info.cache_read_input_token_cost * 1_000_000);
+    }
     if (provider === "openai") openai[model] = entry;
     else anthropic[model] = entry;
   }
   return { openai, anthropic };
 }
 
-export async function fetchPricing() {
-  const res = await fetch(LITELLM_URL, { headers: { "User-Agent": "PriceWatchBot/2.0" } });
+export async function fetchPricing(options = {}) {
+  const {
+    url = LITELLM_URL,
+    timeoutMs = 30_000,
+    userAgent = "PriceWatchBot/2.0",
+  } = options;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { "User-Agent": userAgent },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === "AbortError") {
+      throw new Error(`LiteLLM fetch timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  }
+  clearTimeout(timer);
   if (!res.ok) throw new Error(`LiteLLM fetch failed: HTTP ${res.status}`);
   const data = await res.json();
   const { openai, anthropic } = parsePricing(data);
@@ -50,6 +73,15 @@ export async function fetchPricing() {
     throw new Error("No models parsed from LiteLLM JSON.");
   }
   return { openai, anthropic };
+}
+
+/** Build the GET /prices response body from parsed provider maps. */
+export function buildPricesPayload({ openai, anthropic, lastUpdated }) {
+  return {
+    openai,
+    anthropic,
+    lastUpdated,
+  };
 }
 
 export function diffPricing(provider, prev, now) {
