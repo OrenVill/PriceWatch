@@ -2,7 +2,7 @@
 
 Event-driven AI pricing service — clients register a webhook and receive signed pricing-change pushes.
 
-**Catalog mode** is a minimal deployment that only serves OpenAI and Anthropic model pricing over HTTP (no subscriptions or outbound webhooks). See [Catalog mode](#catalog-mode) below.
+**Catalog mode** is a minimal deployment that serves model pricing over HTTP for the vendors you configure (no subscriptions or outbound webhooks). See [Catalog mode](#catalog-mode) below.
 
 ---
 
@@ -35,7 +35,7 @@ Send a `POST /subscribe` with the URL you want to receive events and an optional
 ```bash
 curl -X POST http://localhost:3001/subscribe \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://your-app.example.com/pricewatch", "providers": ["openai", "anthropic"]}'
+  -d '{"url": "https://your-app.example.com/pricewatch", "providers": ["openai", "anthropic", "gemini"]}'
 ```
 
 The response is `201 Created` and includes the subscriber `id`:
@@ -127,14 +127,14 @@ curl -X DELETE http://localhost:3001/subscribe/<id> \
 
 ## Catalog mode
 
-Run a stateless in-cluster price catalog (LiteLLM source, OpenAI + Anthropic only). Prefer **`catalog-server.js`** — it does not load Express, subscribers, or webhook code:
+Run a stateless in-cluster price catalog (LiteLLM source). Prefer **`catalog-server.js`** — it does not load Express, subscribers, or webhook code:
 
 ```bash
-node catalog-server.js
+CATALOG_PROVIDERS=openai,gemini node catalog-server.js
 # or
 npm run start:catalog
 # or
-node cli.js serve --mode=catalog
+node cli.js serve --mode=catalog --providers=openai,gemini
 ```
 
 `PRICEWATCH_MODE=catalog node server.js` also works but loads the full app module graph; use `catalog-server.js` in production sidecars.
@@ -153,8 +153,8 @@ Designed for **very low** cluster cost:
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/prices` | OpenAI and Anthropic models ($/1M tokens) plus `lastUpdated` |
-| `GET` | `/healthz` | Liveness/readiness (`{ "ok": true, "mode": "catalog" }`) |
+| `GET` | `/prices` | Configured provider maps ($/1M tokens) plus `lastUpdated` |
+| `GET` | `/healthz` | Liveness/readiness (`{ "ok": true, "mode": "catalog", "providers": [...] }`) |
 
 `POST /subscribe` and `DELETE /subscribe/:id` return **404**.
 
@@ -167,13 +167,14 @@ Designed for **very low** cluster cost:
 | `REFRESH_INTERVAL_SEC` | `3600` | Periodic LiteLLM refresh; `0` = refresh on startup only |
 | `HTTP_TIMEOUT_MS` | `30000` | Upstream fetch timeout |
 | `USER_AGENT` | `PriceWatch-Catalog/1.0` | User-Agent for LiteLLM fetch |
+| `CATALOG_PROVIDERS` | all vendors | Comma-separated subset of `openai`, `anthropic`, `gemini`, `meta`, `mistral`, `deepseek`, `qwen`, `xai`, `cohere`, `perplexity`, `amazon`. Only these buckets are parsed from LiteLLM and held in memory. |
 
 On refresh failure, the last successful catalog is kept; `/healthz` stays `200` even if data is stale.
 
 ### Example
 
 ```bash
-curl -sS http://localhost:7000/prices | jq '.openai | keys | length, .anthropic | keys | length'
+curl -sS http://localhost:7000/prices | jq 'del(.lastUpdated) | to_entries | map({provider: .key, models: (.value | keys | length)})'
 curl -sS http://localhost:7000/healthz
 ```
 

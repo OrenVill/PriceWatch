@@ -3,58 +3,57 @@
  * Uses node:http only (no Express) to keep memory and CPU low in-cluster.
  */
 import http from "node:http";
-import { fetchPricing, buildPricesPayload } from "./pricing.js";
+import {
+  fetchPricing,
+  buildPricesPayload,
+  modelCounts,
+} from "./pricing.js";
 
-const HEALTHZ_BODY = Buffer.from('{"ok":true,"mode":"catalog"}');
 const NOT_FOUND_BODY = Buffer.from('{"error":"not found"}');
 
-export function createCatalogCache() {
+export function buildHealthzBody(providers) {
+  return Buffer.from(
+    JSON.stringify({ ok: true, mode: "catalog", providers }),
+  );
+}
+
+export function createCatalogCache(providers) {
+  const pricing = Object.fromEntries(providers.map((p) => [p, {}]));
   const cache = {
-    openai: {},
-    anthropic: {},
+    providers,
+    pricing,
     lastUpdated: null,
-    pricesJson: Buffer.from(
-      JSON.stringify({
-        openai: {},
-        anthropic: {},
-        lastUpdated: null,
-      }),
-    ),
+    pricesJson: Buffer.from(JSON.stringify(buildPricesPayload(pricing, null))),
+    healthzBody: buildHealthzBody(providers),
   };
   return cache;
 }
 
 export function syncPricesJson(cache) {
   cache.pricesJson = Buffer.from(
-    JSON.stringify(
-      buildPricesPayload({
-        openai: cache.openai,
-        anthropic: cache.anthropic,
-        lastUpdated: cache.lastUpdated,
-      }),
-    ),
+    JSON.stringify(buildPricesPayload(cache.pricing, cache.lastUpdated)),
   );
 }
 
 export function getPricesResponse(cache) {
-  return buildPricesPayload({
-    openai: cache.openai,
-    anthropic: cache.anthropic,
-    lastUpdated: cache.lastUpdated,
-  });
+  return buildPricesPayload(cache.pricing, cache.lastUpdated);
 }
 
 export async function refreshCatalog(cache, fetchOptions) {
   try {
-    const { openai, anthropic } = await fetchPricing(fetchOptions);
+    const pricing = await fetchPricing({
+      ...fetchOptions,
+      providers: cache.providers,
+    });
     const lastUpdated = new Date().toISOString();
-    cache.openai = openai;
-    cache.anthropic = anthropic;
+    cache.pricing = pricing;
     cache.lastUpdated = lastUpdated;
     syncPricesJson(cache);
-    console.log(
-      `[catalog] refreshed openai=${Object.keys(openai).length} anthropic=${Object.keys(anthropic).length} lastUpdated=${lastUpdated}`,
-    );
+    const counts = modelCounts(pricing, cache.providers);
+    const summary = cache.providers
+      .map((p) => `${p}=${counts[p]}`)
+      .join(" ");
+    console.log(`[catalog] refreshed ${summary} lastUpdated=${lastUpdated}`);
     return true;
   } catch (err) {
     console.error(`[catalog] refresh failed: ${err.message}`);
@@ -67,11 +66,12 @@ export function createCatalogRequestListener(cache) {
     const path = req.url?.split("?")[0] ?? "";
 
     if (req.method === "GET" && path === "/healthz") {
+      const body = cache.healthzBody;
       res.writeHead(200, {
         "Content-Type": "application/json",
-        "Content-Length": HEALTHZ_BODY.length,
+        "Content-Length": body.length,
       });
-      res.end(HEALTHZ_BODY);
+      res.end(body);
       return;
     }
 
@@ -107,7 +107,7 @@ export function createCatalogApp(cache) {
 }
 
 export async function startCatalogServer(config) {
-  const cache = createCatalogCache();
+  const cache = createCatalogCache(config.catalogProviders);
   const fetchOptions = {
     timeoutMs: config.httpTimeoutMs,
     userAgent: config.userAgent,
@@ -130,7 +130,7 @@ export async function startCatalogServer(config) {
   await new Promise((resolve) => {
     server.listen(config.port, () => {
       console.log(
-        `[catalog] mode=${config.mode} listening on http://0.0.0.0:${config.port} refreshIntervalSec=${config.refreshIntervalSec}`,
+        `[catalog] mode=${config.mode} providers=${config.catalogProviders.join(",")} listening on http://0.0.0.0:${config.port} refreshIntervalSec=${config.refreshIntervalSec}`,
       );
       console.log("   GET /prices");
       console.log("   GET /healthz");

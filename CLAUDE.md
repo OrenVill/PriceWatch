@@ -24,7 +24,7 @@ deliveries are queued in `retry-queue.json` and retried every 5 minutes (6h apar
 up to 3 retries, then dropped).
 
 Logic is split into focused modules:
-- `pricing.js` — fetch, classify (gpt-/o1/o3/o4/chatgpt → openai; claude → anthropic), diff.
+- `pricing.js` — fetch, classify major vendors (openai, anthropic, gemini, meta, mistral, deepseek, qwen, xai, cohere, perplexity, amazon), diff.
 - `store.js` — atomic JSON persistence (subscribers, retry queue, baseline) behind an in-process mutex.
 - `delivery.js` — HMAC-SHA256 signing, signed POST with timeout, verification ping, retry decision.
 - `url-guard.js` — SSRF safeguard rejecting localhost/private webhook targets.

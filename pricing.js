@@ -6,31 +6,125 @@
 const LITELLM_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
+/** First-party / major model vendors tracked by PriceWatch. */
+export const PROVIDERS = [
+  "openai",
+  "anthropic",
+  "gemini",
+  "meta",
+  "mistral",
+  "deepseek",
+  "qwen",
+  "xai",
+  "cohere",
+  "perplexity",
+  "amazon",
+];
+
 export function round(n) {
   return Math.round(n * 10000) / 10000;
 }
 
+/** Parse comma-separated provider names; empty/missing means all PROVIDERS. */
+export function parseProviderList(raw) {
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return [...PROVIDERS];
+  }
+  const list = String(raw)
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const invalid = list.filter((p) => !PROVIDERS.includes(p));
+  if (invalid.length > 0) {
+    throw new Error(
+      `Unknown provider(s): ${invalid.join(", ")}. Valid: ${PROVIDERS.join(", ")}.`,
+    );
+  }
+  if (list.length === 0) {
+    throw new Error("providers list must be non-empty.");
+  }
+  return [...new Set(list)];
+}
+
+export function emptyPricing(providers = PROVIDERS) {
+  return Object.fromEntries(providers.map((p) => [p, {}]));
+}
+
+export function hasPricingModels(pricing) {
+  return Object.values(pricing).some((models) => Object.keys(models).length > 0);
+}
+
+export function baselineHasModels(baseline) {
+  if (!baseline) return false;
+  return PROVIDERS.some((p) => baseline[p] && Object.keys(baseline[p]).length > 0);
+}
+
 export function classify(model) {
+  const lower = model.toLowerCase();
+  const base = model.includes("/") ? model.split("/").pop() : model;
+  const baseLower = base.toLowerCase();
+
+  if (baseLower.startsWith("claude") || lower.includes("anthropic.claude")) {
+    return "anthropic";
+  }
+
   if (
-    model.startsWith("gpt-") ||
-    model.startsWith("o1") ||
-    model.startsWith("o3") ||
-    model.startsWith("o4") ||
-    model.startsWith("chatgpt")
+    baseLower.startsWith("gpt-") ||
+    /^o[134]/.test(baseLower) ||
+    baseLower.startsWith("chatgpt") ||
+    lower.includes("openai.gpt")
   ) {
     return "openai";
   }
-  if (model.startsWith("claude")) return "anthropic";
+
+  if (baseLower.startsWith("gemini") || baseLower.startsWith("gemma")) {
+    return "gemini";
+  }
+
+  if (
+    baseLower.startsWith("llama") ||
+    lower.includes("meta.llama") ||
+    lower.startsWith("meta/llama")
+  ) {
+    return "meta";
+  }
+
+  if (/^(mistral|mixtral|codestral|pixtral|ministral)/i.test(baseLower)) {
+    return "mistral";
+  }
+
+  if (baseLower.startsWith("deepseek")) return "deepseek";
+  if (baseLower.startsWith("qwen")) return "qwen";
+  if (baseLower.startsWith("grok")) return "xai";
+  if (baseLower.startsWith("command") || baseLower.startsWith("cohere")) {
+    return "cohere";
+  }
+  if (baseLower.startsWith("sonar")) return "perplexity";
+
+  if (
+    baseLower.startsWith("nova") ||
+    baseLower.startsWith("titan") ||
+    lower.includes("amazon.nova") ||
+    lower.includes("amazon.titan")
+  ) {
+    return "amazon";
+  }
+
   return null;
 }
 
-export function parsePricing(data) {
-  const openai = {};
-  const anthropic = {};
+export function parsePricing(data, options = {}) {
+  const providers =
+    options.providers && options.providers.length > 0
+      ? options.providers
+      : [...PROVIDERS];
+  const wanted = new Set(providers);
+  const result = emptyPricing(providers);
+
   for (const [model, info] of Object.entries(data)) {
     if (!info.input_cost_per_token || !info.output_cost_per_token) continue;
     const provider = classify(model);
-    if (!provider) continue;
+    if (!provider || !wanted.has(provider)) continue;
     const entry = {
       input: round(info.input_cost_per_token * 1_000_000),
       output: round(info.output_cost_per_token * 1_000_000),
@@ -38,10 +132,9 @@ export function parsePricing(data) {
     if (info.cache_read_input_token_cost) {
       entry.cachedInput = round(info.cache_read_input_token_cost * 1_000_000);
     }
-    if (provider === "openai") openai[model] = entry;
-    else anthropic[model] = entry;
+    result[provider][model] = entry;
   }
-  return { openai, anthropic };
+  return result;
 }
 
 export async function fetchPricing(options = {}) {
@@ -49,6 +142,7 @@ export async function fetchPricing(options = {}) {
     url = LITELLM_URL,
     timeoutMs = 30_000,
     userAgent = "PriceWatchBot/2.0",
+    providers,
   } = options;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -68,20 +162,16 @@ export async function fetchPricing(options = {}) {
   clearTimeout(timer);
   if (!res.ok) throw new Error(`LiteLLM fetch failed: HTTP ${res.status}`);
   const data = await res.json();
-  const { openai, anthropic } = parsePricing(data);
-  if (Object.keys(openai).length === 0 && Object.keys(anthropic).length === 0) {
+  const pricing = parsePricing(data, { providers });
+  if (!hasPricingModels(pricing)) {
     throw new Error("No models parsed from LiteLLM JSON.");
   }
-  return { openai, anthropic };
+  return pricing;
 }
 
 /** Build the GET /prices response body from parsed provider maps. */
-export function buildPricesPayload({ openai, anthropic, lastUpdated }) {
-  return {
-    openai,
-    anthropic,
-    lastUpdated,
-  };
+export function buildPricesPayload(pricing, lastUpdated) {
+  return { ...pricing, lastUpdated };
 }
 
 export function diffPricing(provider, prev, now) {
@@ -100,4 +190,18 @@ export function diffPricing(provider, prev, now) {
     }
   }
   return changes;
+}
+
+export function diffAllPricing(prev, now, providers = PROVIDERS) {
+  const changes = [];
+  for (const provider of providers) {
+    changes.push(...diffPricing(provider, prev[provider] || {}, now[provider] || {}));
+  }
+  return changes;
+}
+
+export function modelCounts(pricing, providers = PROVIDERS) {
+  return Object.fromEntries(
+    providers.map((p) => [p, Object.keys(pricing[p] || {}).length]),
+  );
 }
