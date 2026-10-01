@@ -29,10 +29,11 @@ const FIXTURE = {
 };
 
 test("fixture LiteLLM JSON maps to GET /prices shape", () => {
-  const { openai, anthropic } = parsePricing(FIXTURE);
+  const { openai, anthropic, gemini } = parsePricing(FIXTURE);
   const body = buildPricesPayload({
     openai,
     anthropic,
+    gemini,
     lastUpdated: "2026-09-30T12:00:00.000Z",
   });
   assert.deepEqual(body.openai["gpt-4o"], { input: 2.5, output: 10 });
@@ -43,8 +44,10 @@ test("fixture LiteLLM JSON maps to GET /prices shape", () => {
     cachedInput: 0.3,
   });
   assert.equal(body.lastUpdated, "2026-09-30T12:00:00.000Z");
+  assert.deepEqual(body.gemini["gemini-pro"], { input: 1, output: 2 });
   assert.equal(Object.keys(body.openai).length, 2);
   assert.equal(Object.keys(body.anthropic).length, 1);
+  assert.equal(Object.keys(body.gemini).length, 1);
 });
 
 test("refreshCatalog keeps last good catalog on fetch failure", async () => {

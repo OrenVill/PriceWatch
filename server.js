@@ -16,7 +16,7 @@ import { isAllowedUrl } from "./url-guard.js";
 
 const store = createStore(config.dataDir);
 const BASELINE = "pricing-baseline.json";
-const VALID_PROVIDERS = ["openai", "anthropic"];
+const VALID_PROVIDERS = ["openai", "anthropic", "gemini"];
 
 let lastUpdated = null;
 let nextUpdate = null;
@@ -39,7 +39,7 @@ async function detectAndPush() {
   const baseline = await store.readJson(BASELINE, null);
 
   // First-boot seeding: populate the baseline silently, notify on later diffs only.
-  if (!baseline || (!baseline.openai && !baseline.anthropic)) {
+  if (!baseline || (!baseline.openai && !baseline.anthropic && !baseline.gemini)) {
     await store.writeJson(BASELINE, { ...current, lastUpdated: new Date().toISOString() });
     lastUpdated = new Date().toISOString();
     nextUpdate = new Date(Date.now() + config.refreshIntervalMs).toISOString();
@@ -50,6 +50,7 @@ async function detectAndPush() {
   const changes = [
     ...diffPricing("openai", baseline.openai || {}, current.openai),
     ...diffPricing("anthropic", baseline.anthropic || {}, current.anthropic),
+    ...diffPricing("gemini", baseline.gemini || {}, current.gemini),
   ];
 
   if (changes.length > 0) {
@@ -164,13 +165,14 @@ app.delete("/subscribe/:id", async (req, res) => {
 
 app.get("/health", async (req, res) => {
   const subs = await store.listSubscribers();
-  const baseline = await store.readJson(BASELINE, { openai: {}, anthropic: {} });
+  const baseline = await store.readJson(BASELINE, { openai: {}, anthropic: {}, gemini: {} });
   res.json({
     status: "ok",
     lastUpdated, nextUpdate,
     models: {
       openai: Object.keys(baseline.openai || {}).length,
       anthropic: Object.keys(baseline.anthropic || {}).length,
+      gemini: Object.keys(baseline.gemini || {}).length,
     },
     subscribers: {
       active: subs.filter((s) => s.status === "active").length,

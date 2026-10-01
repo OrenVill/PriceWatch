@@ -14,7 +14,8 @@ test("classify routes by prefix", () => {
   assert.equal(classify("o4-x"), "openai");
   assert.equal(classify("chatgpt-4o-latest"), "openai");
   assert.equal(classify("claude-3-5-sonnet"), "anthropic");
-  assert.equal(classify("gemini-pro"), null);
+  assert.equal(classify("gemini-pro"), "gemini");
+  assert.equal(classify("gemini-2.0-flash"), "gemini");
 });
 
 test("parsePricing splits providers and converts to $/1M", () => {
@@ -24,9 +25,10 @@ test("parsePricing splits providers and converts to $/1M", () => {
     "gemini-pro": { input_cost_per_token: 0.000001, output_cost_per_token: 0.000002 },
     "broken": { input_cost_per_token: 0 },
   };
-  const { openai, anthropic } = parsePricing(raw);
+  const { openai, anthropic, gemini } = parsePricing(raw);
   assert.deepEqual(openai, { "gpt-4o": { input: 2.5, output: 10 } });
   assert.deepEqual(anthropic, { "claude-3-5-sonnet": { input: 3, output: 15 } });
+  assert.deepEqual(gemini, { "gemini-pro": { input: 1, output: 2 } });
 });
 
 test("parsePricing includes cachedInput when LiteLLM provides cache read cost", () => {

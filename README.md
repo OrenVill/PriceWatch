@@ -2,7 +2,7 @@
 
 Event-driven AI pricing service — clients register a webhook and receive signed pricing-change pushes.
 
-**Catalog mode** is a minimal deployment that only serves OpenAI and Anthropic model pricing over HTTP (no subscriptions or outbound webhooks). See [Catalog mode](#catalog-mode) below.
+**Catalog mode** is a minimal deployment that only serves OpenAI, Anthropic, and Gemini model pricing over HTTP (no subscriptions or outbound webhooks). See [Catalog mode](#catalog-mode) below.
 
 ---
 
@@ -35,7 +35,7 @@ Send a `POST /subscribe` with the URL you want to receive events and an optional
 ```bash
 curl -X POST http://localhost:3001/subscribe \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://your-app.example.com/pricewatch", "providers": ["openai", "anthropic"]}'
+  -d '{"url": "https://your-app.example.com/pricewatch", "providers": ["openai", "anthropic", "gemini"]}'
 ```
 
 The response is `201 Created` and includes the subscriber `id`:
@@ -173,7 +173,7 @@ On refresh failure, the last successful catalog is kept; `/healthz` stays `200` 
 ### Example
 
 ```bash
-curl -sS http://localhost:7000/prices | jq '.openai | keys | length, .anthropic | keys | length'
+curl -sS http://localhost:7000/prices | jq '.openai | keys | length, .anthropic | keys | length, .gemini | keys | length'
 curl -sS http://localhost:7000/healthz
 ```
 

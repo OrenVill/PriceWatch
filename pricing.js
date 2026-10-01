@@ -21,12 +21,14 @@ export function classify(model) {
     return "openai";
   }
   if (model.startsWith("claude")) return "anthropic";
+  if (model.startsWith("gemini")) return "gemini";
   return null;
 }
 
 export function parsePricing(data) {
   const openai = {};
   const anthropic = {};
+  const gemini = {};
   for (const [model, info] of Object.entries(data)) {
     if (!info.input_cost_per_token || !info.output_cost_per_token) continue;
     const provider = classify(model);
@@ -39,9 +41,10 @@ export function parsePricing(data) {
       entry.cachedInput = round(info.cache_read_input_token_cost * 1_000_000);
     }
     if (provider === "openai") openai[model] = entry;
-    else anthropic[model] = entry;
+    else if (provider === "anthropic") anthropic[model] = entry;
+    else gemini[model] = entry;
   }
-  return { openai, anthropic };
+  return { openai, anthropic, gemini };
 }
 
 export async function fetchPricing(options = {}) {
@@ -68,18 +71,23 @@ export async function fetchPricing(options = {}) {
   clearTimeout(timer);
   if (!res.ok) throw new Error(`LiteLLM fetch failed: HTTP ${res.status}`);
   const data = await res.json();
-  const { openai, anthropic } = parsePricing(data);
-  if (Object.keys(openai).length === 0 && Object.keys(anthropic).length === 0) {
+  const { openai, anthropic, gemini } = parsePricing(data);
+  if (
+    Object.keys(openai).length === 0 &&
+    Object.keys(anthropic).length === 0 &&
+    Object.keys(gemini).length === 0
+  ) {
     throw new Error("No models parsed from LiteLLM JSON.");
   }
-  return { openai, anthropic };
+  return { openai, anthropic, gemini };
 }
 
 /** Build the GET /prices response body from parsed provider maps. */
-export function buildPricesPayload({ openai, anthropic, lastUpdated }) {
+export function buildPricesPayload({ openai, anthropic, gemini, lastUpdated }) {
   return {
     openai,
     anthropic,
+    gemini,
     lastUpdated,
   };
 }

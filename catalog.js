@@ -12,11 +12,13 @@ export function createCatalogCache() {
   const cache = {
     openai: {},
     anthropic: {},
+    gemini: {},
     lastUpdated: null,
     pricesJson: Buffer.from(
       JSON.stringify({
         openai: {},
         anthropic: {},
+        gemini: {},
         lastUpdated: null,
       }),
     ),
@@ -30,6 +32,7 @@ export function syncPricesJson(cache) {
       buildPricesPayload({
         openai: cache.openai,
         anthropic: cache.anthropic,
+        gemini: cache.gemini,
         lastUpdated: cache.lastUpdated,
       }),
     ),
@@ -40,20 +43,22 @@ export function getPricesResponse(cache) {
   return buildPricesPayload({
     openai: cache.openai,
     anthropic: cache.anthropic,
+    gemini: cache.gemini,
     lastUpdated: cache.lastUpdated,
   });
 }
 
 export async function refreshCatalog(cache, fetchOptions) {
   try {
-    const { openai, anthropic } = await fetchPricing(fetchOptions);
+    const { openai, anthropic, gemini } = await fetchPricing(fetchOptions);
     const lastUpdated = new Date().toISOString();
     cache.openai = openai;
     cache.anthropic = anthropic;
+    cache.gemini = gemini;
     cache.lastUpdated = lastUpdated;
     syncPricesJson(cache);
     console.log(
-      `[catalog] refreshed openai=${Object.keys(openai).length} anthropic=${Object.keys(anthropic).length} lastUpdated=${lastUpdated}`,
+      `[catalog] refreshed openai=${Object.keys(openai).length} anthropic=${Object.keys(anthropic).length} gemini=${Object.keys(gemini).length} lastUpdated=${lastUpdated}`,
     );
     return true;
   } catch (err) {
