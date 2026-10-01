@@ -9,14 +9,20 @@ import express from "express";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
-import { fetchPricing, diffPricing } from "./pricing.js";
+import {
+  fetchPricing,
+  PROVIDERS,
+  baselineHasModels,
+  diffAllPricing,
+  emptyPricing,
+  modelCounts,
+} from "./pricing.js";
 import { createStore } from "./store.js";
 import { postEvent, sendVerification, nextRetry } from "./delivery.js";
 import { isAllowedUrl } from "./url-guard.js";
 
 const store = createStore(config.dataDir);
 const BASELINE = "pricing-baseline.json";
-const VALID_PROVIDERS = ["openai", "anthropic", "gemini"];
 
 let lastUpdated = null;
 let nextUpdate = null;
@@ -39,7 +45,7 @@ async function detectAndPush() {
   const baseline = await store.readJson(BASELINE, null);
 
   // First-boot seeding: populate the baseline silently, notify on later diffs only.
-  if (!baseline || (!baseline.openai && !baseline.anthropic && !baseline.gemini)) {
+  if (!baselineHasModels(baseline)) {
     await store.writeJson(BASELINE, { ...current, lastUpdated: new Date().toISOString() });
     lastUpdated = new Date().toISOString();
     nextUpdate = new Date(Date.now() + config.refreshIntervalMs).toISOString();
@@ -47,11 +53,7 @@ async function detectAndPush() {
     return;
   }
 
-  const changes = [
-    ...diffPricing("openai", baseline.openai || {}, current.openai),
-    ...diffPricing("anthropic", baseline.anthropic || {}, current.anthropic),
-    ...diffPricing("gemini", baseline.gemini || {}, current.gemini),
-  ];
+  const changes = diffAllPricing(baseline, current);
 
   if (changes.length > 0) {
     const subs = (await store.listSubscribers()).filter((s) => s.status === "active");
@@ -132,8 +134,8 @@ app.post("/subscribe", async (req, res) => {
     return res.status(400).json({ error: "Invalid or disallowed url." });
   }
   if (!Array.isArray(providers) || providers.length === 0 ||
-      !providers.every((p) => VALID_PROVIDERS.includes(p))) {
-    return res.status(400).json({ error: `providers must be a non-empty subset of ${VALID_PROVIDERS.join(", ")}.` });
+      !providers.every((p) => PROVIDERS.includes(p))) {
+    return res.status(400).json({ error: `providers must be a non-empty subset of ${PROVIDERS.join(", ")}.` });
   }
 
   const secret = crypto.randomBytes(32).toString("hex");
@@ -165,15 +167,11 @@ app.delete("/subscribe/:id", async (req, res) => {
 
 app.get("/health", async (req, res) => {
   const subs = await store.listSubscribers();
-  const baseline = await store.readJson(BASELINE, { openai: {}, anthropic: {}, gemini: {} });
+  const baseline = await store.readJson(BASELINE, emptyPricing());
   res.json({
     status: "ok",
     lastUpdated, nextUpdate,
-    models: {
-      openai: Object.keys(baseline.openai || {}).length,
-      anthropic: Object.keys(baseline.anthropic || {}).length,
-      gemini: Object.keys(baseline.gemini || {}).length,
-    },
+    models: modelCounts(baseline),
     subscribers: {
       active: subs.filter((s) => s.status === "active").length,
       pending: subs.filter((s) => s.status === "pending").length,

@@ -1,5 +1,7 @@
 /** Shared env parsing (no dotenv — catalog image uses platform env only). */
 
+import { parseProviderList } from "./pricing.js";
+
 function intEnv(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
@@ -11,10 +13,14 @@ export function buildConfig() {
   const mode = (process.env.PRICEWATCH_MODE || "full").toLowerCase();
   const isCatalog = mode === "catalog";
   const refreshIntervalSec = intEnv("REFRESH_INTERVAL_SEC", 3600);
+  const catalogProviders = isCatalog
+    ? parseProviderList(process.env.CATALOG_PROVIDERS)
+    : null;
 
   return {
     mode,
     isCatalog,
+    catalogProviders,
     port: intEnv("PORT", isCatalog ? 7000 : 3001),
     dataDir: process.env.DATA_DIR || ".",
     refreshIntervalSec,

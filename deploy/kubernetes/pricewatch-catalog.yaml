@@ -23,6 +23,9 @@ spec:
               value: "7000"
             - name: REFRESH_INTERVAL_SEC
               value: "3600"
+            # Only parse/cache these LiteLLM vendors (smaller memory than all providers).
+            - name: CATALOG_PROVIDERS
+              value: "openai,anthropic,gemini"
             - name: NODE_OPTIONS
               value: --max-old-space-size=64
           ports:

@@ -29,13 +29,8 @@ const FIXTURE = {
 };
 
 test("fixture LiteLLM JSON maps to GET /prices shape", () => {
-  const { openai, anthropic, gemini } = parsePricing(FIXTURE);
-  const body = buildPricesPayload({
-    openai,
-    anthropic,
-    gemini,
-    lastUpdated: "2026-09-30T12:00:00.000Z",
-  });
+  const pricing = parsePricing(FIXTURE);
+  const body = buildPricesPayload(pricing, "2026-09-30T12:00:00.000Z");
   assert.deepEqual(body.openai["gpt-4o"], { input: 2.5, output: 10 });
   assert.deepEqual(body.openai["gpt-4o-mini"], { input: 0.15, output: 0.6 });
   assert.deepEqual(body.anthropic["claude-3-5-sonnet-20241022"], {
@@ -50,10 +45,16 @@ test("fixture LiteLLM JSON maps to GET /prices shape", () => {
   assert.equal(Object.keys(body.gemini).length, 1);
 });
 
+test("parsePricing with provider filter omits other vendors from payload keys", () => {
+  const pricing = parsePricing(FIXTURE, { providers: ["openai"] });
+  const body = buildPricesPayload(pricing, "t");
+  assert.deepEqual(Object.keys(body).sort(), ["lastUpdated", "openai"]);
+  assert.equal(Object.keys(body.openai).length, 2);
+});
+
 test("refreshCatalog keeps last good catalog on fetch failure", async () => {
-  const cache = createCatalogCache();
-  cache.openai = { "gpt-4o": { input: 1, output: 2 } };
-  cache.anthropic = {};
+  const cache = createCatalogCache(["openai", "anthropic"]);
+  cache.pricing.openai = { "gpt-4o": { input: 1, output: 2 } };
   cache.lastUpdated = "2026-01-01T00:00:00.000Z";
 
   const ok = await refreshCatalog(cache, {
@@ -62,12 +63,12 @@ test("refreshCatalog keeps last good catalog on fetch failure", async () => {
     userAgent: "test",
   });
   assert.equal(ok, false);
-  assert.deepEqual(cache.openai, { "gpt-4o": { input: 1, output: 2 } });
+  assert.deepEqual(cache.pricing.openai, { "gpt-4o": { input: 1, output: 2 } });
   assert.equal(cache.lastUpdated, "2026-01-01T00:00:00.000Z");
 });
 
 test("catalog app returns 404 for POST /subscribe", async () => {
-  const cache = createCatalogCache();
+  const cache = createCatalogCache(["openai"]);
   const app = createCatalogApp(cache);
   const server = app.listen(0);
   const { port } = server.address();
@@ -75,12 +76,13 @@ test("catalog app returns 404 for POST /subscribe", async () => {
     const health = await fetch(`http://127.0.0.1:${port}/healthz`);
     assert.equal(health.status, 200);
     const healthBody = await health.json();
-    assert.deepEqual(healthBody, { ok: true, mode: "catalog" });
+    assert.deepEqual(healthBody, { ok: true, mode: "catalog", providers: ["openai"] });
 
     const prices = await fetch(`http://127.0.0.1:${port}/prices`);
     assert.equal(prices.status, 200);
     const pricesBody = await prices.json();
     assert.equal(pricesBody.lastUpdated, null);
+    assert.deepEqual(Object.keys(pricesBody).sort(), ["lastUpdated", "openai"]);
 
     const sub = await fetch(`http://127.0.0.1:${port}/subscribe`, {
       method: "POST",
@@ -94,10 +96,11 @@ test("catalog app returns 404 for POST /subscribe", async () => {
 });
 
 test("getPricesResponse mirrors cache", () => {
-  const cache = createCatalogCache();
-  cache.openai = { a: { input: 1, output: 2 } };
+  const cache = createCatalogCache(["openai", "gemini"]);
+  cache.pricing.openai = { a: { input: 1, output: 2 } };
   cache.lastUpdated = "t";
   const body = getPricesResponse(cache);
   assert.deepEqual(body.openai, { a: { input: 1, output: 2 } });
+  assert.deepEqual(body.gemini, {});
   assert.equal(body.lastUpdated, "t");
 });
